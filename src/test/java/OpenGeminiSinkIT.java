@@ -1,19 +1,24 @@
-import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.common.restartstrategy.RestartStrategies;
 import org.apache.flink.api.common.time.Time;
-import org.apache.flink.configuration.Configuration;
 import org.apache.flink.connector.opengemini.OpenGeminiSink;
 import org.apache.flink.connector.opengemini.SimpleOpenGeminiConverter;
 import org.apache.flink.runtime.client.JobExecutionException;
-import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.testutils.MiniClusterResourceConfiguration;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.source.ParallelSourceFunction;
 import org.apache.flink.streaming.api.functions.source.SourceFunction;
 import org.apache.flink.test.util.MiniClusterWithClientResource;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
@@ -154,7 +159,7 @@ public class OpenGeminiSinkIT {
         // Generate a large volume of test data
         env.addSource(new TestSource(recordsPerTask))
                 .setParallelism(parallelism)
-                .addSink(createOpenGeminiSink(5000)) // Larger batch size for performance
+                .addSink(createOpenGeminiSink(20000)) // Larger batch size for performance
                 .setParallelism(parallelism);
 
         long startTime = System.currentTimeMillis();
@@ -211,9 +216,103 @@ public class OpenGeminiSinkIT {
     }
 
     private void createDatabaseIfNeeded() {
-        // In a real implementation, you would use the OpenGemini client to create the database
-        // For simplicity, we assume the database exists or you've created it manually
-        System.out.println("Make sure database '" + DATABASE + "' exists in your OpenGemini instance");
+        try {
+            // 1. 首先检查数据库是否已存在
+            boolean databaseExists = false;
+            HttpURLConnection showConnection = null;
+            try {
+                URL showUrl = new URL(OPENGEMINI_URL + "/query");
+                showConnection = (HttpURLConnection) showUrl.openConnection();
+                showConnection.setRequestMethod("GET");
+                showConnection.setDoOutput(true);
+
+                // 设置认证信息（如果需要）
+                if (USERNAME != null && !USERNAME.isEmpty() && PASSWORD != null) {
+                    String auth = USERNAME + ":" + PASSWORD;
+                    String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes(StandardCharsets.UTF_8));
+                    showConnection.setRequestProperty("Authorization", "Basic " + encodedAuth);
+                }
+
+                // 发送 SHOW DATABASES 查询
+                String query = "q=SHOW DATABASES";
+                try (OutputStream os = showConnection.getOutputStream()) {
+                    os.write(query.getBytes(StandardCharsets.UTF_8));
+                }
+
+                // 检查响应
+                int responseCode = showConnection.getResponseCode();
+                if (responseCode == HttpURLConnection.HTTP_OK) {
+                    // 读取响应内容
+                    try (BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(showConnection.getInputStream(), StandardCharsets.UTF_8))) {
+                        String line;
+                        StringBuilder response = new StringBuilder();
+                        while ((line = reader.readLine()) != null) {
+                            response.append(line);
+                        }
+
+                        // 检查响应中是否包含我们的数据库名
+                        databaseExists = response.toString().contains("\"name\":\"" + DATABASE + "\"");
+                    }
+                }
+            } finally {
+                if (showConnection != null) {
+                    showConnection.disconnect();
+                }
+            }
+
+            // 2. 如果数据库不存在，创建它
+            if (!databaseExists) {
+                System.out.println("Database '" + DATABASE + "' does not exist. Creating it now...");
+
+                HttpURLConnection createConnection = null;
+                try {
+                    URL createUrl = new URL(OPENGEMINI_URL + "/query");
+                    createConnection = (HttpURLConnection) createUrl.openConnection();
+                    createConnection.setRequestMethod("POST");
+                    createConnection.setDoOutput(true);
+
+                    // 设置认证信息（如果需要）
+                    if (USERNAME != null && !USERNAME.isEmpty() && PASSWORD != null) {
+                        String auth = USERNAME + ":" + PASSWORD;
+                        String encodedAuth = Base64.getEncoder().encodeToString(auth.getBytes(StandardCharsets.UTF_8));
+                        createConnection.setRequestProperty("Authorization", "Basic " + encodedAuth);
+                    }
+
+                    // 发送创建数据库请求
+                    String createQuery = "q=CREATE DATABASE " + DATABASE;
+                    try (OutputStream os = createConnection.getOutputStream()) {
+                        os.write(createQuery.getBytes(StandardCharsets.UTF_8));
+                    }
+
+                    // 检查响应
+                    int responseCode = createConnection.getResponseCode();
+                    if (responseCode == HttpURLConnection.HTTP_OK) {
+                        System.out.println("Successfully created database '" + DATABASE + "'");
+                    } else {
+                        System.err.println("Failed to create database '" + DATABASE + "'. Response code: " + responseCode);
+                        try (BufferedReader reader = new BufferedReader(
+                                new InputStreamReader(createConnection.getErrorStream(), StandardCharsets.UTF_8))) {
+                            String line;
+                            while ((line = reader.readLine()) != null) {
+                                System.err.println(line);
+                            }
+                        }
+                        throw new RuntimeException("Failed to create database for testing");
+                    }
+                } finally {
+                    if (createConnection != null) {
+                        createConnection.disconnect();
+                    }
+                }
+            } else {
+                System.out.println("Database '" + DATABASE + "' already exists");
+            }
+        } catch (Exception e) {
+            System.err.println("Error checking/creating database: " + e.getMessage());
+            e.printStackTrace();
+            throw new RuntimeException("Failed to setup test database", e);
+        }
     }
 
     /**
@@ -264,7 +363,7 @@ public class OpenGeminiSinkIT {
     /**
      * Source function that generates test records.
      */
-    public static class TestSource implements SourceFunction<TestRecord> {
+    public static class TestSource implements ParallelSourceFunction<TestRecord> {
         private static final long serialVersionUID = 1L;
 
         private final int numRecords;

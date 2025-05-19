@@ -408,6 +408,7 @@ public class OpenGeminiSink<T> extends RichSinkFunction<T> implements Checkpoint
         return new Builder<>();
     }
 
+    // jdk8 doesn't support readAllBytes
     private String readAllBytesAsString(InputStream inputStream, Charset charset) throws IOException {
         if (inputStream == null) {
             return "";
