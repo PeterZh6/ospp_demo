@@ -1,9 +1,6 @@
 package org.apache.flink.connector.opengemini;
 
-import org.apache.flink.api.common.functions.MapFunction;
 import org.apache.flink.api.java.utils.ParameterTool;
-import org.apache.flink.connector.opengemini.OpenGeminiSink;
-import org.apache.flink.connector.opengemini.SimpleOpenGeminiConverter;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.source.SourceFunction;
@@ -26,8 +23,8 @@ public class OpenGeminiSinkExample {
         String measurement = params.get("measurement", "sensor_data");
         int batchSize = params.getInt("batchSize", 1000);
         long flushInterval = params.getLong("flushInterval", 1000);
-        int numSensors = params.getInt("sensors", 10);
-        int recordsPerSecond = params.getInt("rate", 10000);
+        int numSensors = params.getInt("sensors", 35);
+        int recordsPerSecond = params.getInt("rate", 35000);
         String username = params.get("username", "");
         String password = params.get("password", "");
 
@@ -42,7 +39,7 @@ public class OpenGeminiSinkExample {
                 .name("sensor-source");
 
         // Create a converter for SensorReading objects
-        SimpleOpenGeminiConverter<SensorReading> converter = SimpleOpenGeminiConverter.<SensorReading>builder()
+        SimpleOpenGeminiPointConverter<SensorReading> converter = SimpleOpenGeminiPointConverter.<SensorReading>builder()
                 .addTag("sensorId", SensorReading::getSensorId)
                 .addTag("location", SensorReading::getLocation)
                 .addField("temperature", SensorReading::getTemperature)

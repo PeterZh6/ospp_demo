@@ -101,6 +101,11 @@
             <type>test-jar</type>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>io.opengemini</groupId>
+            <artifactId>opengemini-client</artifactId>
+            <version>0.3.4</version>
+        </dependency>
     </dependencies>
 
     <build>
